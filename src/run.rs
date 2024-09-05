@@ -412,20 +412,21 @@ where
         let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
         check_rules(&rules);
         self.egraph.rebuild();
-        loop {
-            let iter = self.run_one(&rules);
-            self.iterations.push(iter);
-            let stop_reason = self.iterations.last().unwrap().stop_reason.clone();
-            // we need to check_limits after the iteration is complete to check for iter_limit
-            if let Some(stop_reason) = stop_reason.or_else(|| self.check_limits().err()) {
-                info!("Stopping: {:?}", stop_reason);
-                self.stop_reason = Some(stop_reason);
-                break;
-            }
-        }
-
-        assert!(!self.iterations.is_empty());
-        assert!(self.stop_reason.is_some());
+        self.egraph.minimize(&self.roots);
+        // loop {
+        //     let iter = self.run_one(&rules);
+        //     self.iterations.push(iter);
+        //     let stop_reason = self.iterations.last().unwrap().stop_reason.clone();
+        //     // we need to check_limits after the iteration is complete to check for iter_limit
+        //     if let Some(stop_reason) = stop_reason.or_else(|| self.check_limits().err()) {
+        //         info!("Stopping: {:?}", stop_reason);
+        //         self.stop_reason = Some(stop_reason);
+        //         break;
+        //     }
+        // }
+        //
+        // assert!(!self.iterations.is_empty());
+        // assert!(self.stop_reason.is_some());
         self
     }
 

@@ -108,6 +108,194 @@ impl<L: Language, N: Analysis<L>> Debug for EGraph<L, N> {
     }
 }
 
+// use for minimize()
+//Context struct is not the strict definition of context in automata theory.
+//It is a combination of symbol and context.
+//Needed to map state keys for partitioning.
+#[derive(Debug, Eq, Hash, PartialEq, Clone)]
+struct Context<'a, L: Language> {
+    //symbol is the symbol in alphabet of (states.len() + 1)-arity
+    symbol: &'a L,
+    //idx of special symbol [] representing empty state
+    idx: usize,
+    //states to the left and right of [], or the context of idx
+    states: Vec<&'a Id>
+}
+
+#[derive(Debug)]
+struct TransitionRule<'a, L: Language> {
+    symbol: &'a L,
+    params: Vec<&'a Id>,
+    next_state: &'a Id,
+}
+
+impl<'a, L: Language> TransitionRule<'a, L> {
+    fn new(input: &'a L, output: &'a Id) -> Self {
+        return TransitionRule {
+            symbol: input,
+            params: input.children().iter().collect(),
+            next_state: output
+        };
+    }
+}
+
+#[derive(Debug)]
+struct TransitionTableEntry<'a, L: Language> {
+    rule: TransitionRule<'a, L>,
+    context_idx: Vec<usize>
+}
+
+impl <'a, L: Language> TransitionTableEntry<'a, L> {
+    fn new(input: &'a L, output: &'a Id, context_map: &HashMap<Context<L>, usize>) -> Self {
+        let context_vec: Vec<Context<L>> = input.children()
+            .iter()
+            .enumerate()
+            .map(|(index, _)| Context {
+                symbol: input,
+                idx: index,
+                states: input.children()[..index]
+                    .iter()
+                    .chain(input.children()[index+1..].iter())
+                    .collect()
+                })
+            .collect();
+        return TransitionTableEntry {
+            rule: TransitionRule::new(input, output),
+            context_idx: context_vec
+                .iter()
+                .map(|context| context_map.get(context).expect("Context not found"))
+                .copied()
+                .collect()
+        };
+    }
+}
+
+struct TransitionTableEntryIter<'a> {
+    params_iter: std::slice::Iter<'a, &'a Id>, // Iterator over params
+    context_idx_iter: std::slice::Iter<'a, usize>, // Iterator over context_idx
+}
+
+impl<'a> Iterator for TransitionTableEntryIter<'a> {
+    type Item = (usize, &'a Id); // Tuple of (context_idx, param)
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Advance both iterators in lockstep
+        match (self.context_idx_iter.next(), self.params_iter.next()) {
+            (Some(&context_idx), Some(&param)) => Some((context_idx, param)),
+            _ => None,
+        }
+    }
+}
+
+impl<'a, L: Language> TransitionTableEntry<'a, L> {
+    fn iter(&'a self) -> TransitionTableEntryIter<'a> {
+        TransitionTableEntryIter {
+            params_iter: self.rule.params.iter(),
+            context_idx_iter: self.context_idx.iter(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TransitionTable<'a, L: Language> {
+    entries: HashMap<&'a Id, Vec<TransitionTableEntry<'a, L>>>
+}
+
+impl<'a, L: Language> TransitionTable<'a, L> {
+    fn new<D>(states: &Vec<&'a EClass<L, D>>, context_map: &HashMap<Context<L>, usize>) -> Self {
+        let mut result: TransitionTable<L> = TransitionTable{
+            entries: HashMap::default()
+        };
+        for q in states.iter() {
+            for input_fn in &q.nodes {
+                result.entries
+                    .entry(&q.id)
+                    .or_default()
+                    .push(TransitionTableEntry::new(&input_fn, &q.id, &context_map));
+            }
+        }
+        return result;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Block<'a> {
+    items: HashSet<&'a Id>
+}
+
+impl<'a> Block<'a> {
+    fn new<I>(iterable: I) -> Self 
+    where
+        I: Iterator<Item = &'a Id>
+    {
+        return Block {
+            items: iterable.collect()
+        };
+    }
+
+    fn contains(&self, item: &Id) -> bool {
+        return self.items.contains(item);
+    }
+}
+
+impl<'a> Block<'a> {
+    fn iter(&self) -> impl Iterator<Item = &Id> {
+        self.items.iter().map(|&id| id)
+    }
+}
+
+impl<'a> PartialEq for Block<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        return self.items == other.items;
+    }
+}
+
+#[derive(Debug)]
+struct Partition<'a> {
+    block_id_to_block: HashMap<usize, Block<'a>>,
+    state_to_block_id: HashMap<&'a Id, usize>,
+}
+
+impl<'a> Partition<'a> {
+    //blocks is vector of equivalence classes
+    fn new(blocks: &Vec<&Block<'a>>) -> Self {
+        return Partition {
+            block_id_to_block: blocks
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(idx, block)| (idx, block.clone()))
+                .collect(),
+            state_to_block_id: HashMap::default()
+        };
+    }
+
+    //r is refined, p is coarser equivalence class partition
+    fn choose<'b>(r: &Self, p: &Self) -> (&'b Block<'b>, &'b Block<'b>) {
+
+    }
+
+    //b_states is states that will be cut out of existing blocks
+    fn cut(&mut self, b_states: &Block) -> Self {
+
+    }
+
+    fn splitf(&mut self, d_states: &Block) -> Self {
+
+    }
+
+    fn splitfn(&mut self, d1_states: &Block, d2_states: &Block) -> Self {
+
+    }
+}
+
+impl<'a> PartialEq for Partition<'a> {
+    fn eq(&self, other: &Self) -> bool {
+
+    }
+}
+// end of use
+
 impl<L: Language, N: Analysis<L>> EGraph<L, N> {
     /// Creates a new, empty `EGraph` with the given `Analysis`
     pub fn new(analysis: N) -> Self {
@@ -592,6 +780,78 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
             config: vec![],
             use_anchors: true,
         }
+    }
+
+    fn get_context_set(&self) -> HashSet<Context<L>> {
+        let mut context_set: HashSet<Context<L>> = HashSet::default();
+        for e_class in self.classes() {
+            for e_node in &e_class.nodes {
+                if e_node.children().is_empty() {
+                    let context: Context<L> = Context{
+                        symbol: &e_node,
+                        idx: 0,
+                        states: vec![]
+                    };
+                    context_set.insert(context);
+                    continue;
+                }
+                for (index, _) in e_node.children().iter().enumerate() {
+                    let context: Context<L> = Context{
+                        symbol: &e_node,
+                        idx: index,
+                        states: e_node.children()[..index]
+                            .iter()
+                            .chain(e_node.children()[index+1..].iter())
+                            .collect()
+                    };
+                    context_set.insert(context);
+                }
+            }
+        }
+        return context_set;
+    }
+
+    pub fn minimize(&mut self, expr_roots: &Vec<Id>) {
+        // context_set initialized, freeze to immutable
+        let context_set: HashSet<Context<L>> = self.get_context_set();
+        let context_map: HashMap<Context<L>, usize> = context_set
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| (value, index))
+            .collect();
+        let transition_table: TransitionTable<L> = TransitionTable::new(
+            &self.classes().collect(), &context_map);
+
+        let q_set: HashSet<&Id> = self.classes().map(|e_class| &e_class.id).collect();
+        let f_set: HashSet<&Id> = expr_roots.iter().collect();
+
+        let q: Block = Block::new(
+            q_set.iter().cloned()
+        );
+        let f: Block = Block::new(
+            f_set.iter().cloned()
+        );
+
+        //(Q,Q)
+        let mut p: Partition = Partition::new(&vec![
+            &q
+        ]);
+        let mut r: Partition = Partition::new(&vec![
+            &Block::new(q_set.difference(&f_set).cloned()),
+            &f
+        ]).splitf(&q);
+
+        while r != p {
+            let (b, s): (&Block, &Block) = Partition::choose(&r, &p);
+            p = p.cut(b);
+            r = r.splitf(b).splitfn(s, b);
+        }
+
+        // let test: Vec<TransitionRule<L>> = self.classes()
+        //     .flat_map(|e_class| e_class.nodes.iter().map(
+        //         move |e_node| TransitionRule::new(e_node, &e_class.id)
+        //     ))
+        //     .collect();
     }
 }
 
@@ -1534,6 +1794,40 @@ mod tests {
             "union x and y".to_string(),
         );
         egraph.rebuild();
+    }
+
+    #[test]
+    fn minimize() {
+        use rewrite as rw;
+        crate::init_logger();
+
+        let rules: &[Rewrite<SymbolLang, ()>] = &[
+            rw!("commute-add"; "(+ ?x ?y)" => "(+ ?y ?x)"),
+            rw!("commute-mul"; "(* ?x ?y)" => "(* ?y ?x)"),
+
+            rw!("add-0"; "(+ ?x 0)" => "?x"),
+            rw!("mul-0"; "(* ?x 0)" => "0"),
+            rw!("mul-1"; "(* ?x 1)" => "?x"),
+        ];
+
+        let start = "(+ 0 (* 1 a))".parse().unwrap();
+        let _ = Runner::default().with_expr(&start).run(rules);
+    }
+
+    #[test]
+    fn transition_table() {
+        use SymbolLang as S;
+
+        crate::init_logger();
+        let mut egraph = EGraph::<S, ()>::default();
+
+        let a = egraph.add(S::leaf("a"));
+        let b = egraph.add(S::leaf("b"));
+        let f1 = egraph.add(S::new("f", vec![a,b]));
+        let f2 = egraph.add(S::leaf("f"));
+        egraph.union(f1,f2);
+        egraph.rebuild();
+        egraph.minimize(&vec![f1]);
     }
 
     #[cfg(all(feature = "serde-1", feature = "serde_json"))]
