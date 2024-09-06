@@ -1,8 +1,6 @@
 use crate::*;
 use std::{
-    borrow::BorrowMut,
-    fmt::{self, Debug, Display},
-    marker::PhantomData,
+    borrow::BorrowMut, collections::VecDeque, fmt::{self, Debug, Display}, marker::PhantomData
 };
 
 #[cfg(feature = "serde-1")]
@@ -219,65 +217,125 @@ impl<'a, L: Language> TransitionTable<'a, L> {
 }
 
 #[derive(Debug, Clone)]
-struct Block<'a> {
-    items: HashSet<&'a Id>
+struct Block {
+    items: HashSet<Id>
 }
 
-impl<'a> Block<'a> {
-    fn new<I>(iterable: I) -> Self 
+impl Block {
+    fn new<'a, I>(iterable: I) -> Self 
     where
         I: Iterator<Item = &'a Id>
     {
         return Block {
-            items: iterable.collect()
+            items: iterable.copied().collect()
         };
     }
 
+    fn subset(sub: &Self, sup: &Self) -> bool {
+        sub.iter().all(|id| sup.contains(id))
+    }
+
+    fn get_one(&self) -> &Id {
+        assert!(!self.items.is_empty());
+        return self.items.iter().next().unwrap();
+    }
+ 
     fn contains(&self, item: &Id) -> bool {
         return self.items.contains(item);
     }
-}
 
-impl<'a> Block<'a> {
-    fn iter(&self) -> impl Iterator<Item = &Id> {
-        self.items.iter().map(|&id| id)
+    fn remove(&mut self, item: &Id) -> bool {
+        return self.items.remove(item);
+    }
+
+    fn len(&self) -> usize {
+        return self.items.len();
     }
 }
 
-impl<'a> PartialEq for Block<'a> {
+impl Block {
+    fn iter(&self) -> impl Iterator<Item = &Id> {
+        self.items.iter().map(|id| id)
+    }
+}
+
+impl PartialEq for Block {
     fn eq(&self, other: &Self) -> bool {
         return self.items == other.items;
     }
 }
 
 #[derive(Debug)]
-struct Partition<'a> {
-    block_id_to_block: HashMap<usize, Block<'a>>,
-    state_to_block_id: HashMap<&'a Id, usize>,
+struct Partition {
+    block_id_to_block: HashMap<usize, Block>,
+    state_to_block_id: HashMap<Id, usize>,
+    free_ids: VecDeque<usize>
 }
 
-impl<'a> Partition<'a> {
+impl Partition {
     //blocks is vector of equivalence classes
-    fn new(blocks: &Vec<&Block<'a>>) -> Self {
+    fn new(blocks: Vec<&Block>) -> Self {
+        let block_pairs: Vec<(usize, &Block)> = blocks
+            .iter()
+            .enumerate()
+            .map(|(idx, block)| (idx, *block))
+            .collect();
+
         return Partition {
-            block_id_to_block: blocks
+            block_id_to_block: block_pairs
+                .iter()
+                .map(|(idx, block)| (*idx, (*block).clone()))
+                .collect(),
+            state_to_block_id: block_pairs
                 .iter()
                 .cloned()
-                .enumerate()
-                .map(|(idx, block)| (idx, block.clone()))
+                .flat_map(|(idx, block)| block.iter().map(move |id| (*id, idx)))
                 .collect(),
-            state_to_block_id: HashMap::default()
+            free_ids: VecDeque::new()
         };
     }
 
-    //r is refined, p is coarser equivalence class partition
-    fn choose<'b>(r: &Self, p: &Self) -> (&'b Block<'b>, &'b Block<'b>) {
+    fn get_block(&self, state: &Id) -> &Block {
+        assert!(self.state_to_block_id.contains_key(state));
+        let block_id = self.state_to_block_id.get(state).unwrap();
+        assert!(self.block_id_to_block.contains_key(block_id));
+        return self.block_id_to_block.get(block_id).unwrap();
+    }
 
+    //returns if successful or not
+    fn add_block(&mut self, block: Block) -> bool {
+        let block_id: usize = if self.free_ids.is_empty() {
+            self.free_ids.pop_front().unwrap()
+        } else {
+            self.block_id_to_block.len()
+        };
+        for id in block.iter() {
+            self.state_to_block_id.insert(id.clone(), block_id);
+        }
+        self.block_id_to_block.insert(block_id, block);
+    }
+
+    //r is refined, p is coarser equivalence class partition
+    fn choose(r: &Self, p: &Self) -> (Block, Block) {
+        //invariant: r is proper refinement of p always (Lemma 11)
+        for sub_block in r.iter() {
+            assert_ne!(sub_block.len(), 0);
+            let q: &Id = sub_block.get_one();
+            let super_block: &Block = p.get_block(q);
+            if (sub_block.len() > super_block.len()/2) {
+                continue;
+            }
+            return (sub_block.clone(), super_block.clone());
+        }
+        panic!("Unable to choose(). Cannot find blocks satisfying requirements.");
     }
 
     //b_states is states that will be cut out of existing blocks
     fn cut(&mut self, b_states: &Block) -> Self {
-
+        //map: current->vec
+        //map.iter() -> remove from current block
+        //add to free_id if empty and remove from map 
+        //map.iter() -> create new blocks
     }
 
     fn splitf(&mut self, d_states: &Block) -> Self {
@@ -289,9 +347,15 @@ impl<'a> Partition<'a> {
     }
 }
 
-impl<'a> PartialEq for Partition<'a> {
+impl PartialEq for Partition {
     fn eq(&self, other: &Self) -> bool {
 
+    }
+}
+
+impl Partition {
+    fn iter(&self) -> impl Iterator<Item = &Block> {
+        self.block_id_to_block.iter().map(|(_, block)| block)
     }
 }
 // end of use
@@ -833,18 +897,18 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
         );
 
         //(Q,Q)
-        let mut p: Partition = Partition::new(&vec![
+        let mut p: Partition = Partition::new(vec![
             &q
         ]);
-        let mut r: Partition = Partition::new(&vec![
+        let mut r: Partition = Partition::new(vec![
             &Block::new(q_set.difference(&f_set).cloned()),
             &f
         ]).splitf(&q);
 
         while r != p {
-            let (b, s): (&Block, &Block) = Partition::choose(&r, &p);
-            p = p.cut(b);
-            r = r.splitf(b).splitfn(s, b);
+            let (b, s): (Block, Block) = Partition::choose(&r, &p);
+            p = p.cut(&b);
+            r = r.splitf(&b).splitfn(&s, &b);
         }
 
         // let test: Vec<TransitionRule<L>> = self.classes()
