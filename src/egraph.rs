@@ -304,27 +304,40 @@ impl Partition {
     }
 
     fn get_block(&self, state: &Id) -> &Block {
-        assert!(self.state_to_block_id.contains_key(state));
-        let block_id = self.state_to_block_id.get(state).unwrap();
-        assert!(self.block_id_to_block.contains_key(block_id));
-        return self.block_id_to_block.get(block_id).unwrap();
+        let block_id = self.get_block_id(state);
+        assert!(self.block_id_to_block.contains_key(&block_id));
+        return self.block_id_to_block.get(&block_id).unwrap();
     }
 
-    //returns if successful or not
-    fn add_block(&mut self, block: Block) -> bool {
+    fn get_block_id(&self, state: &Id) -> usize {
+        assert!(self.state_to_block_id.contains_key(state));
+        let block_id: usize = *self.state_to_block_id.get(state).unwrap();
+        return block_id;
+    }
+
+    fn remove_state(&mut self, state: &Id) {
+        let block_id: usize = self.get_block_id(state);
+        assert!(self.block_id_to_block.contains_key(&block_id));
+        let block: &mut Block = self.block_id_to_block.get_mut(&block_id).unwrap();
+        block.remove(state);
+        if block.len() == 0 {
+            self.free_ids.push_back(block_id);
+            self.block_id_to_block.remove(&block_id).expect(&format!("Key '{}' not found when attempting to remove_state()", block_id));
+        }
+        self.state_to_block_id.remove(state);
+    }
+
+    fn add_block(&mut self, block: Block) {
         let block_id: usize = if self.free_ids.is_empty() {
             self.block_id_to_block.len()
         } else {
             self.free_ids.pop_front().unwrap()
         };
         for id in block.iter() {
-            if self.state_to_block_id.contains_key(id) {
-                return false;
-            }
+            assert!(!self.state_to_block_id.contains_key(id));
             self.state_to_block_id.insert(id.clone(), block_id);
         }
         self.block_id_to_block.insert(block_id, block);
-        return true;
     }
 
     //r is refined, p is coarser equivalence class partition
@@ -334,7 +347,7 @@ impl Partition {
             assert_ne!(sub_block.len(), 0);
             let q: &Id = sub_block.get_one();
             let super_block: &Block = p.get_block(q);
-            if (sub_block.len() > super_block.len()/2) {
+            if sub_block.len() > super_block.len()/2 {
                 continue;
             }
             return (sub_block.clone(), super_block.clone());
@@ -343,19 +356,32 @@ impl Partition {
     }
 
     //b_states is states that will be cut out of existing blocks
-    fn cut(&mut self, b_states: &Block) -> Self {
+    fn cut(&mut self, b_states: &Block) -> &mut Self {
         //map: current->vec
         //map.iter() -> remove from current block
         //add to free_id if empty and remove from map 
         //map.iter() -> create new blocks
+        let mut block_id_to_cut: HashMap<usize, Vec<Id>> = HashMap::default();
+
+        for state in b_states.iter() {
+            block_id_to_cut.entry(self.get_block_id(state)).or_insert(vec![]).push(state.clone());
+        }
+
+        for (_, cut_states) in block_id_to_cut.iter() {
+            for state in cut_states.iter() {
+                self.remove_state(state);
+            }
+            self.add_block(Block::new(cut_states.iter()));
+        }
+
+        return self;
+    }
+
+    fn splitf(&mut self, d_states: &Block) -> &mut Self {
 
     }
 
-    fn splitf(&mut self, d_states: &Block) -> Self {
-
-    }
-
-    fn splitfn(&mut self, d1_states: &Block, d2_states: &Block) -> Self {
+    fn splitfn(&mut self, d1_states: &Block, d2_states: &Block) -> &mut Self {
 
     }
 }
@@ -921,7 +947,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
             .enumerate()
             .map(|(index, value)| (value, index))
             .collect();
-        let trnsition_table: TransitionTable<L> = TransitionTable::new(
+        let transition_table: TransitionTable<L> = TransitionTable::new(
             &self.classes().collect(), &context_map);
 
         let q_set: HashSet<&Id> = self.classes().map(|e_class| &e_class.id).collect();
@@ -941,12 +967,13 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
         let mut r: Partition = Partition::new(vec![
             &Block::new(q_set.difference(&f_set).cloned()),
             &f
-        ]).splitf(&q);
+        ]);
+        r.splitf(&q);
 
         while r != p {
             let (b, s): (Block, Block) = Partition::choose(&r, &p);
-            p = p.cut(&b);
-            r = r.splitf(&b).splitfn(&s, &b);
+            p.cut(&b);
+            r.splitf(&b).splitfn(&s, &b);
         }
 
         // let test: Vec<TransitionRule<L>> = self.classes()
