@@ -362,7 +362,32 @@ impl Partition {
 
 impl PartialEq for Partition {
     fn eq(&self, other: &Self) -> bool {
+        if (self.state_count() != other.state_count()) || (self.block_count() != other.block_count()) {
+            return false;
+        }
+        let mut states_intersect: HashMap<&Id, bool> = self.iter().flat_map(|block| block.iter().map(|id| (id, false))).collect();
         
+        let states_equal: bool = other.iter().flat_map(|block| block.iter()).all(|state| states_intersect.contains_key(state));
+        if !states_equal {
+            return false;
+        }
+
+        let states: Vec<&Id> = states_intersect.iter().map(|(&id, _)| id).collect();
+
+        for current_state in states.iter() {
+            assert!(states_intersect.contains_key(current_state));
+            if *states_intersect.get(current_state).unwrap() {
+                continue;
+            }
+            if self.get_block(current_state) != other.get_block(current_state) {
+                return false;
+            }
+            for state in self.get_block(current_state).iter() {
+                states_intersect.insert(state, true);
+            }
+        }
+
+        return true;
     }
 }
 
