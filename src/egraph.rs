@@ -295,6 +295,14 @@ impl Partition {
         };
     }
 
+    fn state_count(&self) -> usize {
+        return self.block_id_to_block.iter().map(|(_, block)| block.len()).sum();
+    }
+
+    fn block_count(&self) -> usize {
+        return self.block_id_to_block.len(); 
+    }
+
     fn get_block(&self, state: &Id) -> &Block {
         assert!(self.state_to_block_id.contains_key(state));
         let block_id = self.state_to_block_id.get(state).unwrap();
@@ -305,14 +313,18 @@ impl Partition {
     //returns if successful or not
     fn add_block(&mut self, block: Block) -> bool {
         let block_id: usize = if self.free_ids.is_empty() {
-            self.free_ids.pop_front().unwrap()
-        } else {
             self.block_id_to_block.len()
+        } else {
+            self.free_ids.pop_front().unwrap()
         };
         for id in block.iter() {
+            if self.state_to_block_id.contains_key(id) {
+                return false;
+            }
             self.state_to_block_id.insert(id.clone(), block_id);
         }
         self.block_id_to_block.insert(block_id, block);
+        return true;
     }
 
     //r is refined, p is coarser equivalence class partition
@@ -336,6 +348,7 @@ impl Partition {
         //map.iter() -> remove from current block
         //add to free_id if empty and remove from map 
         //map.iter() -> create new blocks
+
     }
 
     fn splitf(&mut self, d_states: &Block) -> Self {
@@ -349,7 +362,7 @@ impl Partition {
 
 impl PartialEq for Partition {
     fn eq(&self, other: &Self) -> bool {
-
+        
     }
 }
 
@@ -883,7 +896,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
             .enumerate()
             .map(|(index, value)| (value, index))
             .collect();
-        let transition_table: TransitionTable<L> = TransitionTable::new(
+        let trnsition_table: TransitionTable<L> = TransitionTable::new(
             &self.classes().collect(), &context_map);
 
         let q_set: HashSet<&Id> = self.classes().map(|e_class| &e_class.id).collect();
